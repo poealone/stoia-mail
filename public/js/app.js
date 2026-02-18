@@ -15,6 +15,11 @@ const App = (() => {
     polling: null,
     loadingFolders: false,
     loadingEmails: false,
+    filters: {
+      search: '',
+      unreadOnly: false,
+      dateRange: 'all',
+    },
   };
 
   // ── Helpers ──────────────────────────────────────────────────────────────
@@ -173,7 +178,6 @@ const App = (() => {
       state.emails = await api('GET',
         `/api/accounts/${state.activeAccount}/emails?folder=${encodeURIComponent(state.activeFolder)}&limit=50`
       );
-      document.getElementById('email-count').textContent = `${state.emails.length} emails`;
       renderEmailList(state.emails);
     } catch (e) {
       showToast('Failed to load emails: ' + e.message, 'error');
@@ -188,11 +192,20 @@ const App = (() => {
       el.innerHTML = '<div class="loading-spinner">Loading emails...</div>';
       return;
     }
-    if (!emails || emails.length === 0) {
-      el.innerHTML = '<div class="empty-state">No emails in this folder</div>';
+    // Apply filters
+    const filtered = applyFilters(emails);
+    // Update count to show filtered vs total
+    const countEl = document.getElementById('email-count');
+    if (countEl) {
+      countEl.textContent = filtered.length < emails.length
+        ? `${filtered.length} / ${emails.length} emails`
+        : `${emails.length} emails`;
+    }
+    if (!filtered || filtered.length === 0) {
+      el.innerHTML = `<div class="empty-state">${emails.length ? 'No emails match your filters' : 'No emails in this folder'}</div>`;
       return;
     }
-    el.innerHTML = emails.map(e => `
+    el.innerHTML = filtered.map(e => `
       <div class="email-item ${e.read ? '' : 'unread'} ${e.uid == state.activeEmail?.uid ? 'active' : ''}"
            data-uid="${e.uid}">
         <div class="email-item-row1">
@@ -304,6 +317,98 @@ const App = (() => {
     return (bytes / 1048576).toFixed(1) + 'MB';
   }
 
+  // ── Filters ──────────────────────────────────────────────────────────────
+
+  function applyFilters(emails) {
+    const { search, unreadOnly, dateRange } = state.filters;
+    let result = emails;
+
+    if (search) {
+      const q = search.toLowerCase();
+      result = result.filter(e =>
+        (e.subject || '').toLowerCase().includes(q) ||
+        (e.from || '').toLowerCase().includes(q)
+      );
+    }
+
+    if (unreadOnly) {
+      result = result.filter(e => !e.read);
+    }
+
+    if (dateRange !== 'all') {
+      const now = new Date();
+      let cutoff;
+      if (dateRange === 'today') {
+        cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      } else if (dateRange === 'week') {
+        cutoff = new Date(now);
+        cutoff.setDate(cutoff.getDate() - 7);
+      } else if (dateRange === 'month') {
+        cutoff = new Date(now);
+        cutoff.setMonth(cutoff.getMonth() - 1);
+      }
+      if (cutoff) {
+        result = result.filter(e => e.date && new Date(e.date) >= cutoff);
+      }
+    }
+
+    return result;
+  }
+
+  function updateFilterUI() {
+    const { search, unreadOnly, dateRange } = state.filters;
+    const unreadBtn = document.getElementById('filter-unread');
+    const dateSelect = document.getElementById('filter-date');
+    const searchInput = document.getElementById('filter-search');
+    const clearBtn = document.getElementById('filter-clear');
+
+    if (unreadBtn) unreadBtn.classList.toggle('filter-active', unreadOnly);
+    if (dateSelect) dateSelect.value = dateRange;
+    if (searchInput && searchInput.value !== search) searchInput.value = search;
+
+    const anyActive = search || unreadOnly || dateRange !== 'all';
+    if (clearBtn) clearBtn.classList.toggle('filter-active', anyActive);
+  }
+
+  function initFilterBar() {
+    const searchEl = document.getElementById('filter-search');
+    const unreadBtn = document.getElementById('filter-unread');
+    const dateEl = document.getElementById('filter-date');
+    const clearBtn = document.getElementById('filter-clear');
+
+    if (searchEl) {
+      searchEl.addEventListener('input', () => {
+        state.filters.search = searchEl.value;
+        updateFilterUI();
+        renderEmailList(state.emails);
+      });
+    }
+
+    if (unreadBtn) {
+      unreadBtn.addEventListener('click', () => {
+        state.filters.unreadOnly = !state.filters.unreadOnly;
+        updateFilterUI();
+        renderEmailList(state.emails);
+      });
+    }
+
+    if (dateEl) {
+      dateEl.addEventListener('change', () => {
+        state.filters.dateRange = dateEl.value;
+        updateFilterUI();
+        renderEmailList(state.emails);
+      });
+    }
+
+    if (clearBtn) {
+      clearBtn.addEventListener('click', () => {
+        state.filters = { search: '', unreadOnly: false, dateRange: 'all' };
+        updateFilterUI();
+        renderEmailList(state.emails);
+      });
+    }
+  }
+
   function escHtml(str) {
     if (!str) return '';
     return String(str)
@@ -412,7 +517,6 @@ const App = (() => {
         );
         const prevCount = state.emails.length;
         state.emails = fresh;
-        document.getElementById('email-count').textContent = `${fresh.length} emails`;
         renderEmailList(fresh);
         if (fresh.length > prevCount) {
           showToast(`${fresh.length - prevCount} new email(s)`, 'success');
@@ -560,6 +664,9 @@ const App = (() => {
         bd.closest('.modal').classList.add('hidden');
       });
     });
+
+    // Filter bar
+    initFilterBar();
 
     // Load accounts
     loadAccounts();

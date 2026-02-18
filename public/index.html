@@ -42,6 +42,18 @@
           <span id="folder-title">INBOX</span>
           <span id="email-count" class="email-count"></span>
         </div>
+        <!-- Filter Bar -->
+        <div id="filter-bar" class="filter-bar">
+          <input type="text" id="filter-search" class="filter-search" placeholder="🔍 Search subject or sender…">
+          <button id="filter-unread" class="filter-btn" title="Unread only">Unread</button>
+          <select id="filter-date" class="filter-select">
+            <option value="all">All time</option>
+            <option value="today">Today</option>
+            <option value="week">This Week</option>
+            <option value="month">This Month</option>
+          </select>
+          <button id="filter-clear" class="filter-btn filter-clear-btn" title="Clear filters">✕</button>
+        </div>
         <div id="email-list" class="email-list">
           <div class="empty-state">Select a folder to load emails</div>
         </div>
