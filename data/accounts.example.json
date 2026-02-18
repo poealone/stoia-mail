@@ -1,0 +1,14 @@
+[
+  {
+    "id": "11111111-1111-1111-1111-111111111111",
+    "label": "My Email",
+    "email": "you@example.com",
+    "imapHost": "imap.example.com",
+    "imapPort": 993,
+    "smtpHost": "smtp.example.com",
+    "smtpPort": 465,
+    "tls": true,
+    "imapUser": "you@example.com",
+    "imapPass": "ENCRYPTED_AT_RUNTIME"
+  }
+]
