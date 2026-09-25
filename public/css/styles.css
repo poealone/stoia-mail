@@ -61,16 +61,17 @@ body::before {
 
 /* ── Header ─────────────────────────────────────────────────────────────────── */
 #header {
-  height: var(--header-h);
+  min-height: var(--header-h);
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 0 16px;
+  padding: 8px 16px;
   background: rgba(10,10,18,0.92);
   backdrop-filter: var(--blur);
   border-bottom: 1px solid var(--glass-border);
   flex-shrink: 0;
   z-index: 100;
+  flex-wrap: wrap;
 }
 
 .header-brand {
@@ -100,9 +101,13 @@ body::before {
   gap: 6px;
   flex: 1;
   overflow-x: auto;
-  scrollbar-width: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--gold-dim) transparent;
+  flex-wrap: wrap;
+  min-width: 0;
 }
-.account-tabs::-webkit-scrollbar { display: none; }
+.account-tabs::-webkit-scrollbar { height: 3px; }
+.account-tabs::-webkit-scrollbar-thumb { background: var(--gold-dim); border-radius: 3px; }
 
 .account-tab {
   padding: 6px 14px;
@@ -298,10 +303,94 @@ body::before {
   flex-shrink: 0;
 }
 
-.panel-header span:first-child {
+.panel-header span:first-child,
+.panel-header-left #folder-title {
   font-weight: 600;
   font-size: 14px;
   color: var(--text);
+}
+
+.panel-header-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Secret folder menu next to the INBOX title */
+.folder-menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.folder-menu-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  opacity: 0.35;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 6px;
+  transition: all var(--transition);
+}
+.folder-menu-btn:hover {
+  opacity: 1;
+  color: var(--gold);
+  background: var(--glass-hover);
+}
+.folder-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+  background: var(--glass, rgba(20,20,28,0.95));
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  padding: 4px;
+  z-index: 50;
+  min-width: 170px;
+  backdrop-filter: blur(12px);
+}
+.folder-menu.hidden { display: none; }
+.folder-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  transition: all var(--transition);
+}
+.folder-menu-item:hover {
+  background: rgba(212,175,55,0.15);
+  color: var(--gold);
+}
+
+/* Unread badge (red dot) on account tabs */
+.account-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.account-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--red);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 0 8px rgba(224,85,85,0.55);
 }
 
 .email-count {
@@ -860,4 +949,26 @@ body::before {
   height: 1px;
   background: var(--glass-border);
   margin: 12px 0;
+}
+
+/* ── Load More ───────────────────────────────────────────────────────────────── */
+.load-more-wrap {
+  padding: 12px 16px;
+  text-align: center;
+}
+.btn-load-more {
+  background: rgba(212,175,55,0.1);
+  border: 1px solid rgba(212,175,55,0.3);
+  color: var(--accent);
+  padding: 10px 24px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  transition: all 0.2s;
+  width: 100%;
+}
+.btn-load-more:hover {
+  background: rgba(212,175,55,0.2);
+  border-color: var(--accent);
 }

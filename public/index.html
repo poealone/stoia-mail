@@ -39,7 +39,15 @@
       <!-- Email List -->
       <section id="email-list-panel">
         <div class="panel-header">
-          <span id="folder-title">INBOX</span>
+          <div class="panel-header-left">
+            <span id="folder-title">INBOX</span>
+            <div class="folder-menu-wrap">
+              <button id="btn-folder-menu" class="folder-menu-btn" title="">⋯</button>
+              <div id="folder-menu" class="folder-menu hidden">
+                <button id="btn-mark-all-read" class="folder-menu-item">✓ Mark all as read</button>
+              </div>
+            </div>
+          </div>
           <span id="email-count" class="email-count"></span>
         </div>
         <!-- Filter Bar -->

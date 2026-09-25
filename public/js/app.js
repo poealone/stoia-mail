@@ -12,9 +12,15 @@ const App = (() => {
     activeFolder: 'INBOX',
     emails: [],
     activeEmail: null,
+    unread: {},        // accountId -> unread count (INBOX)
     polling: null,
     loadingFolders: false,
     loadingEmails: false,
+    loadingMore: false,
+    totalEmails: 0,
+    currentOffset: 0,
+    searchMode: false,
+    searchQuery: '',
     filters: {
       search: '',
       unreadOnly: false,
@@ -97,29 +103,48 @@ const App = (() => {
     if (state.accounts.length > 0 && !state.activeAccount) {
       selectAccount(state.accounts[0].id);
     }
+    // Refresh unread counts for every connected inbox on load
+    refreshAllUnread();
   }
 
   function renderAccountTabs() {
     const el = document.getElementById('account-tabs');
-    el.innerHTML = state.accounts.map(a => `
+    el.innerHTML = state.accounts.map(a => {
+      const count = state.unread[a.id] || 0;
+      const badge = count > 0
+        ? `<span class="account-badge" title="${count} unread">${count > 99 ? '99+' : count}</span>`
+        : '';
+      return `
       <button class="account-tab ${a.id === state.activeAccount ? 'active' : ''}"
               data-id="${a.id}">
-        ${a.label || a.email}
-      </button>
-    `).join('');
+        <span class="account-tab-label">${escHtml(a.label || a.email)}</span>${badge}
+      </button>`;
+    }).join('');
     el.querySelectorAll('.account-tab').forEach(btn => {
       btn.addEventListener('click', () => selectAccount(btn.dataset.id));
     });
   }
 
+  // Fetch INBOX unread count for one account and update its badge
+  async function refreshUnread(id) {
+    try {
+      const { unread } = await api('GET', `/api/accounts/${id}/unread`);
+      state.unread[id] = unread;
+      renderAccountTabs();
+    } catch { /* ignore — keep prior count */ }
+  }
+
+  // Fetch unread counts for all connected inboxes in parallel
+  function refreshAllUnread() {
+    state.accounts.forEach(a => refreshUnread(a.id));
+  }
+
   async function selectAccount(id) {
     state.activeAccount = id;
     state.activeFolder = 'INBOX';
-    state.emails = [];
     state.activeEmail = null;
     renderAccountTabs();
     renderEmailReader(null);
-    renderEmailList([]);
     await loadFolders();
     await loadEmails();
     startPolling();
@@ -170,20 +195,78 @@ const App = (() => {
 
   // ── Emails ───────────────────────────────────────────────────────────────
 
-  async function loadEmails() {
+  async function loadEmails(append = false) {
     if (!state.activeAccount) return;
-    state.loadingEmails = true;
-    renderEmailList(null);
+    if (!append) {
+      state.loadingEmails = true;
+      state.currentOffset = 0;
+      state.emails = [];
+      state.searchMode = false;
+      state.searchQuery = '';
+      renderEmailList(null);
+    } else {
+      state.loadingMore = true;
+    }
     try {
-      state.emails = await api('GET',
-        `/api/accounts/${state.activeAccount}/emails?folder=${encodeURIComponent(state.activeFolder)}&limit=50`
+      const result = await api('GET',
+        `/api/accounts/${state.activeAccount}/emails?folder=${encodeURIComponent(state.activeFolder)}&limit=50&offset=${state.currentOffset}`
       );
+      state.totalEmails = result.total;
+      if (append) {
+        state.emails = state.emails.concat(result.emails);
+      } else {
+        state.emails = result.emails;
+      }
+      state.currentOffset = state.emails.length;
       renderEmailList(state.emails);
     } catch (e) {
       showToast('Failed to load emails: ' + e.message, 'error');
-      renderEmailList([]);
+      if (!append) renderEmailList([]);
     }
     state.loadingEmails = false;
+    state.loadingMore = false;
+  }
+
+  async function searchEmailsServer(query, append = false) {
+    if (!state.activeAccount || !query) return;
+    if (!append) {
+      state.loadingEmails = true;
+      state.currentOffset = 0;
+      state.emails = [];
+      state.searchMode = true;
+      state.searchQuery = query;
+      renderEmailList(null);
+    } else {
+      state.loadingMore = true;
+    }
+    try {
+      const result = await api('GET',
+        `/api/accounts/${state.activeAccount}/search?folder=${encodeURIComponent(state.activeFolder)}&q=${encodeURIComponent(query)}&limit=50&offset=${state.currentOffset}`
+      );
+      state.totalEmails = result.total;
+      if (append) {
+        state.emails = state.emails.concat(result.emails);
+      } else {
+        state.emails = result.emails;
+      }
+      state.currentOffset = state.emails.length;
+      renderEmailList(state.emails);
+    } catch (e) {
+      showToast('Search failed: ' + e.message, 'error');
+      if (!append) renderEmailList([]);
+    }
+    state.loadingEmails = false;
+    state.loadingMore = false;
+  }
+
+  async function loadMore() {
+    if (state.loadingMore || state.loadingEmails) return;
+    if (state.currentOffset >= state.totalEmails) return;
+    if (state.searchMode) {
+      await searchEmailsServer(state.searchQuery, true);
+    } else {
+      await loadEmails(true);
+    }
   }
 
   function renderEmailList(emails) {
@@ -192,19 +275,28 @@ const App = (() => {
       el.innerHTML = '<div class="loading-spinner">Loading emails...</div>';
       return;
     }
-    // Apply filters
+    // Apply local filters (unread/date only — search is now server-side)
     const filtered = applyFilters(emails);
-    // Update count to show filtered vs total
+    // Update count to show loaded vs total
     const countEl = document.getElementById('email-count');
     if (countEl) {
-      countEl.textContent = filtered.length < emails.length
-        ? `${filtered.length} / ${emails.length} emails`
-        : `${emails.length} emails`;
+      const showing = filtered.length;
+      const total = state.totalEmails;
+      if (state.searchMode) {
+        countEl.textContent = `${showing} / ${total} results`;
+      } else if (showing < total) {
+        countEl.textContent = `${showing} / ${total} emails`;
+      } else {
+        countEl.textContent = `${total} emails`;
+      }
     }
     if (!filtered || filtered.length === 0) {
-      el.innerHTML = `<div class="empty-state">${emails.length ? 'No emails match your filters' : 'No emails in this folder'}</div>`;
+      el.innerHTML = `<div class="empty-state">${state.searchMode ? 'No emails match your search' : (emails.length ? 'No emails match your filters' : 'No emails in this folder')}</div>`;
       return;
     }
+
+    const hasMore = state.currentOffset < state.totalEmails;
+
     el.innerHTML = filtered.map(e => `
       <div class="email-item ${e.read ? '' : 'unread'} ${e.uid == state.activeEmail?.uid ? 'active' : ''}"
            data-uid="${e.uid}">
@@ -215,10 +307,20 @@ const App = (() => {
         <div class="email-subject">${escHtml(e.subject)}</div>
         <div class="email-snippet">${escHtml(e.snippet || '')}</div>
       </div>
-    `).join('');
+    `).join('') + (hasMore ? `
+      <div class="load-more-wrap">
+        <button class="btn-load-more" id="btn-load-more">Load more (${state.totalEmails - state.currentOffset} remaining)</button>
+      </div>
+    ` : (state.totalEmails > 0 ? `<div class="load-more-wrap" style="color:var(--text-muted);font-size:12px;padding:12px;text-align:center;">All ${state.totalEmails} emails loaded</div>` : ''));
+
     el.querySelectorAll('.email-item').forEach(item => {
       item.addEventListener('click', () => openEmail(item.dataset.uid));
     });
+
+    const loadMoreBtn = document.getElementById('btn-load-more');
+    if (loadMoreBtn) {
+      loadMoreBtn.addEventListener('click', loadMore);
+    }
   }
 
   async function openEmail(uid) {
@@ -235,9 +337,11 @@ const App = (() => {
       state.activeEmail = email;
       // Mark read locally
       const listEmail = state.emails.find(e => e.uid == uid);
-      if (listEmail) {
+      if (listEmail && !listEmail.read) {
         listEmail.read = true;
         document.querySelector(`.email-item[data-uid="${uid}"]`)?.classList.remove('unread');
+        // Keep the account's unread badge in sync
+        refreshUnread(state.activeAccount);
       }
       renderEmailReader(email);
     } catch (e) {
@@ -269,8 +373,12 @@ const App = (() => {
           <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:1px;">
             📎 Attachments (${email.attachments.length})
           </div>
-          ${email.attachments.map(a => `
-            <span class="attachment-item">📎 ${escHtml(a.filename || 'attachment')} (${formatSize(a.size)})</span>
+          ${email.attachments.map((a, i) => `
+            <a href="/api/accounts/${state.activeAccount}/emails/${email.uid}/attachments/${i}?folder=${encodeURIComponent(state.activeFolder)}" 
+               target="_blank" download="${escHtml(a.filename || 'attachment')}" 
+               class="attachment-item" style="cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:4px;">
+              ⬇️ ${escHtml(a.filename || 'attachment')} (${formatSize(a.size)})
+            </a>
           `).join('')}
         </div>`
       : '';
@@ -320,16 +428,10 @@ const App = (() => {
   // ── Filters ──────────────────────────────────────────────────────────────
 
   function applyFilters(emails) {
-    const { search, unreadOnly, dateRange } = state.filters;
+    const { unreadOnly, dateRange } = state.filters;
     let result = emails;
 
-    if (search) {
-      const q = search.toLowerCase();
-      result = result.filter(e =>
-        (e.subject || '').toLowerCase().includes(q) ||
-        (e.from || '').toLowerCase().includes(q)
-      );
-    }
+    // Search is now server-side — no local filtering needed
 
     if (unreadOnly) {
       result = result.filter(e => !e.read);
@@ -370,6 +472,8 @@ const App = (() => {
     if (clearBtn) clearBtn.classList.toggle('filter-active', anyActive);
   }
 
+  let searchDebounce = null;
+
   function initFilterBar() {
     const searchEl = document.getElementById('filter-search');
     const unreadBtn = document.getElementById('filter-unread');
@@ -380,7 +484,30 @@ const App = (() => {
       searchEl.addEventListener('input', () => {
         state.filters.search = searchEl.value;
         updateFilterUI();
-        renderEmailList(state.emails);
+        // Debounce server-side search
+        clearTimeout(searchDebounce);
+        searchDebounce = setTimeout(() => {
+          const q = searchEl.value.trim();
+          if (q.length >= 2) {
+            searchEmailsServer(q);
+          } else if (q.length === 0) {
+            // Clear search — reload normal inbox
+            loadEmails();
+          }
+        }, 400);
+      });
+
+      // Also support Enter key for immediate search
+      searchEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          clearTimeout(searchDebounce);
+          const q = searchEl.value.trim();
+          if (q.length >= 1) {
+            searchEmailsServer(q);
+          } else {
+            loadEmails();
+          }
+        }
       });
     }
 
@@ -404,7 +531,22 @@ const App = (() => {
       clearBtn.addEventListener('click', () => {
         state.filters = { search: '', unreadOnly: false, dateRange: 'all' };
         updateFilterUI();
-        renderEmailList(state.emails);
+        // Reset to normal inbox view
+        loadEmails();
+      });
+    }
+
+    // Infinite scroll on the email list
+    const emailListEl = document.getElementById('email-list');
+    if (emailListEl) {
+      emailListEl.addEventListener('scroll', () => {
+        const { scrollTop, scrollHeight, clientHeight } = emailListEl;
+        // When within 100px of bottom, load more
+        if (scrollTop + clientHeight >= scrollHeight - 100) {
+          if (!state.loadingMore && !state.loadingEmails && state.currentOffset < state.totalEmails) {
+            loadMore();
+          }
+        }
       });
     }
   }
@@ -504,22 +646,57 @@ const App = (() => {
     }
   }
 
+  // ── Folder menu (secret) ──────────────────────────────────────────────────
+
+  function toggleFolderMenu(force) {
+    const menu = document.getElementById('folder-menu');
+    if (!menu) return;
+    const show = force !== undefined ? force : menu.classList.contains('hidden');
+    menu.classList.toggle('hidden', !show);
+  }
+
+  async function markAllRead() {
+    if (!state.activeAccount) return showToast('No account selected', 'error');
+    toggleFolderMenu(false);
+    try {
+      const { marked } = await api('POST',
+        `/api/accounts/${state.activeAccount}/mark-all-read?folder=${encodeURIComponent(state.activeFolder)}`
+      );
+      // Reflect read state locally
+      state.emails.forEach(e => { e.read = true; });
+      renderEmailList(state.emails);
+      refreshUnread(state.activeAccount);
+      showToast(marked ? `Marked ${marked} email(s) as read` : 'Nothing to mark', 'success');
+    } catch (e) {
+      showToast('Mark all read failed: ' + e.message, 'error');
+    }
+  }
+
   // ── Polling ───────────────────────────────────────────────────────────────
 
   function startPolling() {
     if (state.polling) clearInterval(state.polling);
     state.polling = setInterval(async () => {
-      if (!state.activeAccount || state.loadingEmails) return;
-      // Silent refresh
+      // Keep all inbox badges fresh even while reading another account
+      refreshAllUnread();
+      if (!state.activeAccount || state.loadingEmails || state.searchMode) return;
+      // Silent refresh — only check first page for new emails
       try {
-        const fresh = await api('GET',
-          `/api/accounts/${state.activeAccount}/emails?folder=${encodeURIComponent(state.activeFolder)}&limit=50`
+        const result = await api('GET',
+          `/api/accounts/${state.activeAccount}/emails?folder=${encodeURIComponent(state.activeFolder)}&limit=50&offset=0`
         );
-        const prevCount = state.emails.length;
-        state.emails = fresh;
-        renderEmailList(fresh);
-        if (fresh.length > prevCount) {
-          showToast(`${fresh.length - prevCount} new email(s)`, 'success');
+        const prevTotal = state.totalEmails;
+        state.totalEmails = result.total;
+        // Merge new emails at the top
+        if (result.total > prevTotal) {
+          const newCount = result.total - prevTotal;
+          // Prepend new emails that aren't already in our list
+          const existingUids = new Set(state.emails.map(e => e.uid));
+          const newEmails = result.emails.filter(e => !existingUids.has(e.uid));
+          state.emails = newEmails.concat(state.emails);
+          state.currentOffset = state.emails.length;
+          renderEmailList(state.emails);
+          showToast(`${newCount} new email(s)`, 'success');
         }
       } catch {}
     }, 60000); // every 60s
@@ -653,6 +830,22 @@ const App = (() => {
     document.getElementById('btn-refresh').addEventListener('click', () => {
       loadFolders();
       loadEmails();
+      refreshAllUnread();
+    });
+
+    // Secret folder menu (next to INBOX title)
+    const folderMenuBtn = document.getElementById('btn-folder-menu');
+    if (folderMenuBtn) {
+      folderMenuBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleFolderMenu();
+      });
+    }
+    const markAllBtn = document.getElementById('btn-mark-all-read');
+    if (markAllBtn) markAllBtn.addEventListener('click', markAllRead);
+    // Close the menu when clicking anywhere else
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.folder-menu-wrap')) toggleFolderMenu(false);
     });
 
     // Modal close buttons
@@ -681,6 +874,7 @@ const App = (() => {
     archiveEmail,
     editAccount,
     removeAccount,
+    loadMore,
   };
 
 })();
